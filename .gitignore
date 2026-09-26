@@ -1,0 +1,32 @@
+.env
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.mp4
+*.zip
+*.tar.gz
+*.docx
+*.pptx
+*.xlsx
+*.lnk
+*.pdf
+*.exe
+*.txt
+desktop.ini
+kesplus
+新建*
+测试文档*
+测试表格*
+二课积分*
+作品信息*
+后端交付*
+工资表*
+百度网盘*
+雷电*
+剪映*
+CC Switch*
+Postman*
+VNC*
+Visual Studio*
+deepseek*
