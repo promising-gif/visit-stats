@@ -1,3 +1,4 @@
+from openai import OpenAI
 from fastapi import FastAPI, Body
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,10 @@ load_dotenv()            # 新增：加载 .env 文件里的配置
 # 现在密码不再写在代码里，而是从 .env 文件里读取
 DATABASE_URL = os.getenv("DATABASE_URL")
 engine = create_engine(DATABASE_URL)
+client = OpenAI(
+    api_key=os.getenv("DEEPSEEK_API_KEY"),
+    base_url="https://api.deepseek.com"
+)
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -93,6 +98,13 @@ async def root():
                 <button onclick="loadAllPages()">刷新列表</button>
                 <div id="listResult">点击按钮加载数据...</div>
             </div>
+            <div class="section">
+                <h3>🤖 AI 智能分析</h3>
+                <button onclick="analyzeData()">生成分析</button>
+                <div id="aiResult">点击按钮生成 AI 分析...</div>
+            </div>
+
+
 
             <div class="section">
                 <h3>📅 按日期筛选</h3>
@@ -183,6 +195,19 @@ async def root():
                 const today = new Date().toISOString().split('T')[0];
                 const todayRows = data.data.filter(row => row.visit_time && row.visit_time.startsWith(today));
                 document.getElementById('todayCount').innerText = todayRows.length || 0;
+            }
+            async function analyzeData() {
+                const resultDiv = document.getElementById('aiResult');
+                resultDiv.innerHTML = '⏳ AI 分析中，请稍候...';
+                try {
+                    const resp = await fetch('/analyze');
+                    const data = await resp.json();
+                    // 把换行符转换成 HTML 换行
+                    const formatted = data.analysis.replace(/\\n/g, '<br>');
+                    resultDiv.innerHTML = `<div style="line-height: 1.8;">${formatted}</div>`;
+                } catch (e) {
+                    resultDiv.innerHTML = `<div class="error">❌ 分析失败: ${e.message}</div>`;
+                }
             }
 
 
@@ -322,6 +347,36 @@ async def get_hot_pages():
             })
         return {"data": hot_list}
 
+@app.get("/analyze")
+async def analyze_visits():
+    # 1. 从数据库查出最近的访问数据
+    with engine.connect() as conn:
+        sql = text("""
+            SELECT page_url, COUNT(*) as visit_count 
+            FROM page_views 
+            GROUP BY page_url 
+            ORDER BY visit_count DESC 
+            LIMIT 10
+        """)
+        result = conn.execute(sql).fetchall()
+        
+        # 2. 把数据整理成文字
+        data_text = "网站访问数据如下：\n"
+        for row in result:
+            data_text += f"- 页面 {row[0]}：被访问 {row[1]} 次\n"
+        
+        # 3. 调用 DeepSeek API 生成分析
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {"role": "system", "content": "你是一个数据分析助手，请用简洁的中文分析以下网站访问数据，给出2-3条建议。"},
+                {"role": "user", "content": data_text}
+            ]
+        )
+        
+        analysis = response.choices[0].message.content
+        return {"analysis": analysis}
+
 
 @app.get("/pages/date/{date_str}")
 async def get_pages_by_date(date_str: str):
@@ -351,7 +406,10 @@ async def create_page_view(request: Request):
 
     page_url = data.get("page_url", "/unknown")
     visitor_ip = data.get("visitor_ip", None)
-
+    # 👇 过滤本地路径
+    if page_url.startswith("C:") or page_url.startswith("file://") or page_url.startswith("/C:"):
+        return {"message": "本地路径已忽略", "page_url": page_url}
+    
     # 如果没有传 visitor_ip，就从请求头中获取真实 IP
     if not visitor_ip:
         forwarded = request.headers.get("X-Forwarded-For")
@@ -360,12 +418,12 @@ async def create_page_view(request: Request):
         else:
             visitor_ip = request.client.host
 
+
     with engine.connect() as conn:
         sql = text("INSERT INTO page_views (page_url, visitor_ip) VALUES (:url, :ip)")
         conn.execute(sql, {"url": page_url, "ip": visitor_ip})
         conn.commit()
         return {"message": "访问记录已保存!", "page_url": page_url, "visitor_ip": visitor_ip}
-
 
 
 @app.get("/pages/{page_url}")
